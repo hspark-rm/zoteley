@@ -1,0 +1,7 @@
+data/
+__pycache__/
+build/
+.venv/
+dist/
+*.spec.bak
+app/

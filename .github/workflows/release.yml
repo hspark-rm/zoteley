@@ -1,0 +1,49 @@
+# v* 태그를 올리면 macOS(Apple Silicon·Intel)와 Windows 용 설치 파일을 만들어 Release 에 올린다.
+# 수동 실행(workflow_dispatch)은 Release 없이 빌드 결과만 Artifacts 로 남긴다.
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            asset: Zoteley-mac-apple-silicon.dmg
+          - os: macos-15-intel
+            asset: Zoteley-mac-intel.dmg
+          - os: windows-latest
+            asset: Zoteley-windows.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -r requirements.txt
+      - name: Build
+        run: pyinstaller --noconfirm zoteley.spec
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: hdiutil create -volname Zoteley -srcfolder dist/Zoteley.app -ov -format UDZO "${{ matrix.asset }}"
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path dist/Zoteley -DestinationPath "${{ matrix.asset }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset }}

@@ -1,0 +1,2 @@
+pyside6-essentials>=6.8
+pyinstaller>=6.10
