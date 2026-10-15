@@ -46,7 +46,7 @@ from pathlib import Path
 API = "https://api.mendeley.com"
 DOC_TYPE = "application/vnd.mendeley-document.1+json"
 # Cloudflare 가 urllib 기본 User-Agent 를 error 1010 으로 막는다(2026-10-13 확인).
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 UA = f"Zoteley/{VERSION} (+https://github.com/hspark-rm/zoteley)"
 CONF_DIR = Path(os.environ.get("ZMS_CONF") or Path.home() / ".config" / "zotero-mendeley-sync")
 # 앱으로 실행하면 앱 꾸러미 안이 아니라 사용자 폴더에 작업 파일을 둔다(ZMS_DATA).
@@ -1723,7 +1723,9 @@ def cmd_convert(a):
             fail(EXIT_MISSING, "연결 없이 문헌 정보만 넣어 바꾸려면 --allow-unlinked 를 붙이세요. 파일은 만들지 않음.")
         if target == "endnote":
             # 라이브러리에 없는 문헌은 별도 db-id 로 두어, 내 라이브러리의 다른 레코드에 잘못 연결되지 않게 한다
-            travel = "zoteley" + secrets.token_hex(15)
+            # EndNote db-id 와 같은 모양(영문 소문자·숫자 36자)이어야 한다. 37자로 넣었더니 EndNote 가
+            # 원고의 인용을 하나도 인식하지 못했다(2026-10-15).
+            travel = "".join(secrets.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(36))
             for i, (key, _, _) in enumerate(missing):
                 links[key] = (i + 1, travel)
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(SPECPATH)
 ASSETS = ROOT / "assets"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 datas = [(str(p), "assets") for p in ASSETS.glob("*.png")] if ASSETS.exists() else []
 icon_mac = ASSETS / "icon.icns"
 icon_win = ASSETS / "icon.ico"
