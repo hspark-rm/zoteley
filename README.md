@@ -1,15 +1,15 @@
 # Zoteley
 
-**Zotero ↔ Mendeley Cite 원고 변환** · [English below](#english)
+**Zotero · Mendeley Cite · EndNote 원고 인용 변환** · [English below](#english)
 
-Zotero로 쓴 Word 원고를 Mendeley Cite 원고로, Mendeley Cite 원고를 Zotero 원고로 바꿉니다.
-Zotero를 쓰는 사람과 Mendeley를 쓰는 공저자가 같은 원고에서 인용을 편집할 수 있게 하는 것이 목적입니다.
+Word 원고의 인용을 Zotero · Mendeley Cite · EndNote 형식 사이에서 바꿉니다(6방향).
+서로 다른 문헌 관리 프로그램을 쓰는 공저자가 같은 원고에서 인용을 편집할 수 있게 하는 것이 목적입니다.
 
-- 원본 파일은 바꾸지 않고 `원고_mendeley.docx` 또는 `원고_zotero.docx` 사본을 만듭니다.
-- 상대 라이브러리에 없는 문헌은 Mendeley에 추가하거나 Zotero에 넣을 수 있습니다.
+- 원본 파일은 바꾸지 않고 `원고_zotero.docx`, `원고_mendeley.docx`, `원고_endnote.docx` 사본을 만듭니다.
+- 상대 라이브러리에 없는 문헌은 Mendeley에 추가하거나 Zotero에 넣을 수 있습니다. EndNote는 가져오기 파일(XML)을 만들어 줍니다.
 - 화면에 보이는 인용 표기와 본문은 그대로 둡니다.
 
-> Zotero, Mendeley, Elsevier와 관계없는 개인 프로젝트입니다. 각 이름은 해당 소유자의 상표입니다.
+> Zotero, Mendeley, Elsevier, EndNote(Clarivate)와 관계없는 개인 프로젝트입니다. 각 이름은 해당 소유자의 상표입니다.
 
 ## 내려받기
 
@@ -36,14 +36,18 @@ Zotero를 쓰는 사람과 Mendeley를 쓰는 공저자가 같은 원고에서 �
    3. **Generate secret**을 누르고 약관에 동의한 뒤 등록합니다.
    4. 받은 **client ID**와 **secret**을 Zoteley 설정에 넣고 **저장하고 로그인**을 누릅니다.
 2. **Zotero 데이터 폴더**: 보통 홈 폴더의 `Zotero`라 자동으로 찾습니다. 다르면 Zotero 설정 > 고급 > 파일 및 폴더의 위치를 고릅니다.
+3. **EndNote 라이브러리 (선택)**: EndNote로 바꿀 때 내 라이브러리 문헌과 연결하려면 `.enl` 파일을 고릅니다. 기본값은 문서 폴더의 `My EndNote Library.enl`입니다.
+
+Mendeley 설정은 Mendeley로 바꿀 때만 필요합니다.
 
 ## 쓰는 법
 
 1. Word 원고(.docx)를 Zoteley 창에 끌어다 놓습니다.
-2. Zotero 원고면 **Mendeley로 보내기**, Mendeley 원고면 **Zotero로 받기**를 누릅니다.
+2. 바꿀 형식의 버튼(**Zotero 원고로 / Mendeley 원고로 / EndNote 원고로**)을 누릅니다. 원고의 지금 형식은 자동으로 알아냅니다.
 3. 끝나면 **Word로 열기**를 누릅니다.
    - Mendeley 원고: Word의 Mendeley Cite에서 참고문헌을 한 번 새로고침합니다.
    - Zotero 원고: Word의 Zotero 탭에서 **Refresh**를 한 번 누릅니다.
+   - EndNote 원고: Word의 EndNote 탭에서 **Update Citations and Bibliography**를 한 번 누릅니다.
 
 변환하기 전에 Word에서 원고를 닫고, 변경 내용 추적은 모두 수락해 두세요.
 
@@ -56,7 +60,7 @@ Zotero를 쓰는 사람과 Mendeley를 쓰는 공저자가 같은 원고에서 �
 ## 개인정보
 
 - 원고와 라이브러리는 내 컴퓨터에서만 처리합니다.
-- 네트워크는 Mendeley 공식 API(`api.mendeley.com`)와 내 컴퓨터의 Zotero에만 연결합니다.
+- 네트워크는 Mendeley 공식 API(`api.mendeley.com`)와 내 컴퓨터의 Zotero에만 연결합니다. EndNote 라이브러리는 사본을 읽기만 합니다.
 - Mendeley 키와 로그인 정보는 내 컴퓨터의 사용자 폴더에만 저장합니다.
 
 ---
@@ -64,13 +68,13 @@ Zotero를 쓰는 사람과 Mendeley를 쓰는 공저자가 같은 원고에서 �
 <a id="english"></a>
 ## English
 
-Zoteley converts Word manuscripts between **Zotero** citations and **Mendeley Cite** citations, so a Zotero user and a Mendeley co-author can both edit citations in the same manuscript.
+Zoteley converts citations in Word manuscripts between **Zotero**, **Mendeley Cite** and **EndNote** (all six directions), so co-authors using different reference managers can edit citations in the same manuscript.
 
-- The original file is never modified; a copy (`*_mendeley.docx` or `*_zotero.docx`) is created.
+- The original file is never modified; a copy (`*_zotero.docx`, `*_mendeley.docx` or `*_endnote.docx`) is created.
 - References missing on the other side can be added to Mendeley or imported into Zotero.
 - Visible citation text and body text are preserved.
 
-> Independent project, not affiliated with Zotero, Mendeley, or Elsevier. All names are trademarks of their owners.
+> Independent project, not affiliated with Zotero, Mendeley, Elsevier, or EndNote (Clarivate). All names are trademarks of their owners.
 
 ### Download
 
@@ -87,7 +91,7 @@ The app is not code-signed, so you will see a warning the first time:
 
 ### Usage
 
-Drop a `.docx` onto the window, then click **Send to Mendeley** (Zotero manuscript) or **Receive into Zotero** (Mendeley manuscript). Open the result in Word and refresh the bibliography once (Mendeley Cite) or click **Refresh** (Zotero).
+Drop a `.docx` onto the window and click **To Zotero**, **To Mendeley** or **To EndNote**; the current format is detected automatically. Open the result in Word and refresh once: Mendeley Cite (refresh bibliography), Zotero (**Refresh**), EndNote (**Update Citations and Bibliography**). Mendeley setup is only needed when converting to Mendeley; an EndNote library (`.enl`) is optional and links citations to your records.
 
 ### Limitations
 

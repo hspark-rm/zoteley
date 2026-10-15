@@ -127,7 +127,7 @@ def cmd_config(a):
         # 앱은 secret 을 명령줄 대신 권한 600 임시 파일로 넘긴다. 읽은 즉시 지운다.
         os.environ["ZMS_CLIENT_SECRET"] = Path(secret_file).read_text(encoding="utf-8").strip()
         Path(secret_file).unlink()
-    if a.client_id or a.zotero_dir or a.group is not None or os.environ.get("ZMS_CLIENT_SECRET"):
+    if a.client_id or a.zotero_dir or a.endnote_library or a.group is not None or os.environ.get("ZMS_CLIENT_SECRET"):
         conf = conf_raw()
         if a.client_id and a.client_id != conf.get("client_id"):
             conf["client_id"] = a.client_id.strip()
@@ -140,6 +140,10 @@ def cmd_config(a):
             conf["zotero_dir"] = a.zotero_dir
         if a.group is not None:
             conf["group"] = a.group or None
+        if a.endnote_library:
+            if not Path(a.endnote_library).exists():
+                fail(EXIT_CONFIG, f"{a.endnote_library} 이 없음 — EndNote 라이브러리(.enl)를 고르세요.")
+            conf["endnote_library"] = a.endnote_library
         conf.setdefault("redirect_uri", REDIRECT_DEFAULT)
         write_conf(conf)
         print("저장됨")
@@ -1111,107 +1115,260 @@ def style_info(style_id):
         return name, "author-date"
 
 
-def cmd_to_mendeley(a):
-    """Zotero 로 인용한 원고 사본을 Mendeley Cite 원고로 바꾼다."""
-    src, out = Path(a.docx), out_path(a.docx, "_mendeley")
-    infos, data = load_docx(src)
-    x = data["word/document.xml"].decode("utf-8")
-    for n in data:
-        if n != "word/document.xml" and n.startswith("word/") and b"ZOTERO_ITEM" in (data[n] or b""):
-            print(f"  주의: {n} 의 Zotero 인용(각주 등)은 바꾸지 않음")
-    backup = json.loads(latest("backup_*.json").read_text(encoding="utf-8"))
-    gid, docs = target_library(backup, default_group(a))
-    idx = defaultdict(set)
-    for d in docs:
-        for k in doc_keys(d):
-            idx[k].add(d["id"])
+# ---------- 세 형식 공통 변환: 읽기(원고 → 인용 목록) · 쓰기(인용 목록 → 대상 형식) ----------
+# 인용(cite) = {"s","e": 원고 속 위치, "result": 화면에 보이는 런 XML, "rpr", "text",
+#               "items": [{"key": 원본 문헌 식별자, "csl": CSL-JSON, "extra": 쪽수·앞뒤 글 등}]}
+# 참고문헌(bib) = {"s","e": 단락 범위, "inner": 필드 표시를 뺀 단락 XML}
 
-    fields = find_fields(x, "ZOTERO_ITEM")
+FORMATS = ("zotero", "mendeley", "endnote")
+FORMAT_NAME = {"zotero": "Zotero", "mendeley": "Mendeley", "endnote": "EndNote"}
+
+# EndNote 참고문헌 유형 ↔ CSL 유형. 숫자는 EndNote XML 의 ref-type 번호.
+EN_TYPES = {
+    "article-journal": ("Journal Article", 17), "book": ("Book", 6), "chapter": ("Book Section", 5),
+    "report": ("Report", 27), "thesis": ("Thesis", 32), "paper-conference": ("Conference Proceedings", 10),
+    "webpage": ("Web Page", 12), "article-magazine": ("Magazine Article", 19),
+    "article-newspaper": ("Newspaper Article", 23), "dataset": ("Dataset", 59), "manuscript": ("Manuscript", 36),
+}
+EN_TO_CSL = {v[0]: k for k, v in EN_TYPES.items()}
+EN_TO_CSL.update({"Edited Book": "book", "Conference Paper": "paper-conference", "Electronic Article": "article-journal",
+                  "Government Document": "report", "Generic": "document", "Online Database": "webpage"})
+# EndNote 스타일 이름 ↔ CSL 스타일. 대응이 없으면 APA 로 둔다(Word 에서 스타일을 다시 고르면 됨).
+EN_STYLES = {"apa": "APA 7th", "chicago-author-date": "Chicago 17th A-D", "vancouver": "Vancouver",
+             "nature": "Nature", "harvard-cite-them-right": "Harvard", "american-medical-association": "AMA",
+             "ieee": "IEEE", "american-sociological-association": "ASA", "modern-language-association": "MLA 9th"}
+EN_LAYOUT = ("<ENLayout><Style>{style}</Style><LeftDelim>{{</LeftDelim><RightDelim>}}</RightDelim>"
+             "<FontName>Times New Roman</FontName><FontSize>12</FontSize><ReflistTitle></ReflistTitle>"
+             "<StartingRefnum>1</StartingRefnum><FirstLineIndent>0</FirstLineIndent><HangingIndent>720</HangingIndent>"
+             "<LineSpacing>0</LineSpacing><SpaceAfter>0</SpaceAfter><HyperlinksEnabled>0</HyperlinksEnabled>"
+             "<HyperlinksVisible>0</HyperlinksVisible><EnableBibliographyCategories>0</EnableBibliographyCategories></ENLayout>")
+EN_INSTANT = ("<ENInstantFormat><Enabled>1</Enabled><ScanUnformatted>1</ScanUnformatted><ScanChanges>1</ScanChanges>"
+              "<Suspended>0</Suspended></ENInstantFormat>")
+# settings.xml 에서 w:docVars 뒤에 와야 하는 요소들(OOXML 순서). 이 중 처음 나오는 것 앞에 넣는다.
+AFTER_DOCVARS = ("<w:rsids", "<m:mathPr", "<w:attachedSchema", "<w:themeFontLang", "<w:clrSchemeMapping",
+                 "<w:doNotIncludeSubdocsInStats", "<w:doNotAutoCompressPictures", "<w:forceUpgrade", "<w:captions",
+                 "<w:readModeInkLockDown", "<w:smartTagType", "<sl:schemaLibrary", "<w:shapeDefaults",
+                 "<w:doNotEmbedSmartTags", "<w:decimalSymbol", "<w:listSeparator", "</w:settings>")
+DOI_RE = re.compile(r"10\.\d{4,9}/[^\s\"<>]+")
+
+
+def find_top_fields(x, marker):
+    """최상위 필드 중 명령문에 marker 가 있는 것. EndNote 는 EN.CITE 필드 안에 EN.CITE.DATA 필드를 넣으므로
+    중첩을 따라가며 안쪽 필드의 숨은 데이터(fldData)도 바깥 필드에 붙여 둔다."""
+    out, stack = [], []
+    tok = re.compile(r'<w:fldChar\b[^>]*w:fldCharType="(begin|separate|end)"[^>]*?(?:/>|>(.*?)</w:fldChar>)'
+                     r"|<w:instrText\b[^>]*>(.*?)</w:instrText>", re.S)
+    for m in tok.finditer(x):
+        kind = m.group(1)
+        if kind == "begin":
+            data = re.search(r"<w:fldData[^>]*>(.*?)</w:fldData>", m.group(2) or "", re.S)
+            stack.append({"begin": m.start(), "data": data.group(1) if data else "", "instr": [], "sep": None,
+                          "inner_data": ""})
+        elif kind == "separate":
+            if stack:
+                stack[-1]["sep"] = m.start()
+        elif kind == "end":
+            if not stack:
+                continue
+            f = stack.pop()
+            if stack:
+                stack[-1]["inner_data"] = stack[-1]["inner_data"] or f["data"]
+                continue
+            instr = html.unescape("".join(f["instr"]))
+            if marker in instr and f["sep"] is not None:
+                out.append({"s": run_start(x, f["begin"]), "sep_end": run_end(x, f["sep"]),
+                            "end_start": run_start(x, m.start()), "e": run_end(x, m.start()), "instr": instr,
+                            "data": f["data"] or f["inner_data"]})
+        elif stack:
+            stack[-1]["instr"].append(m.group(3))
+    return out
+
+
+def cite_from_field(x, f, items):
+    result = x[f["sep_end"]:f["end_start"]]
+    return {"s": f["s"], "e": f["e"], "result": result, "rpr": first_rpr(result), "text": runs_text(result),
+            "items": items}
+
+
+def bib_from_field(x, f):
+    ps, pe = para_start(x, f["s"]), para_end(x, f["end_start"])
+    return {"s": ps, "e": pe, "inner": x[ps:f["s"]] + x[f["sep_end"]:f["end_start"]] + x[f["e"]:pe]}
+
+
+def read_zotero(x):
     cites = []
-    for f in fields:
-        instr = f[4]
-        cites.append(json.loads(instr[instr.index("{"):instr.rindex("}") + 1]))
-    # 같은 Zotero 문헌은 한 번만 짝짓는다.
-    zitems = {}
-    for c in cites:
-        for it in c["citationItems"]:
-            zitems.setdefault((it.get("uris") or [str(it.get("id"))])[0], it["itemData"])
-    mid, missing = {}, []
-    for zk, d in zitems.items():
-        hits = set().union(*(idx.get(k, set()) for k in csl_keys(d))) if csl_keys(d) else set()
-        if len(hits) == 1:
-            mid[zk] = next(iter(hits))
+    for f in find_top_fields(x, "ZOTERO_ITEM"):
+        j = json.loads(f["instr"][f["instr"].index("{"):f["instr"].rindex("}") + 1])
+        items = [{"key": (it.get("uris") or [str(it.get("id"))])[0], "csl": it.get("itemData") or {},
+                  "extra": {k: it[k] for k in CITE_ITEM_EXTRA if k in it}} for it in j["citationItems"]]
+        cites.append(cite_from_field(x, f, items))
+    return cites, [bib_from_field(x, f) for f in find_top_fields(x, "ZOTERO_BIBL")]
+
+
+def read_mendeley(x):
+    cites = []
+    for s, e, tag, pr, inner in find_sdts(x, CITE_PREFIX):
+        c = cite_decode(tag[len(CITE_PREFIX):])
+        items = [{"key": it["id"], "csl": it.get("itemData") or {},
+                  "extra": {k: it[k] for k in CITE_ITEM_EXTRA if k in it}} for it in c["citationItems"]]
+        cites.append({"s": s, "e": e, "result": inner, "rpr": first_rpr(pr), "text": runs_text(inner), "items": items})
+    return cites, [{"s": s, "e": e, "inner": inner} for s, e, _, _, inner in find_sdts(x, "MENDELEY_BIBLIOGRAPHY")]
+
+
+def en_text(el, path):
+    t = el.find(path)
+    return "".join(t.itertext()).strip() if t is not None else ""
+
+
+def en_name(s):
+    s = s.strip()
+    if "," in s:
+        fam, giv = s.split(",", 1)
+        return {"family": fam.strip(), "given": giv.strip()}
+    return {"literal": s}
+
+
+def en_record_to_csl(rec):
+    rt = rec.find("ref-type")
+    csl = {"type": EN_TO_CSL.get(rt.get("name") if rt is not None else "", "article-journal"),
+           "title": en_text(rec, "titles/title")}
+    authors = [en_name("".join(a.itertext())) for a in rec.findall("contributors/authors/author")]
+    if authors:
+        csl["author"] = authors
+    editors = [en_name("".join(a.itertext())) for a in rec.findall("contributors/secondary-authors/author")]
+    if editors and csl["type"] == "chapter":
+        csl["editor"] = editors
+    container = en_text(rec, "titles/secondary-title") or en_text(rec, "periodical/full-title")
+    if container:
+        csl["container-title"] = container
+    year = re.search(r"\d{4}", en_text(rec, "dates/year"))
+    if year:
+        parts = [year.group(0)]
+        month = en_text(rec, "dates/pub-dates/date")[:3].lower()
+        months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+        if month in months:
+            parts.append(str(months.index(month) + 1))
+        csl["issued"] = {"date-parts": [parts]}
+    for src, dst in (("volume", "volume"), ("number", "issue"), ("pages", "page"), ("edition", "edition"),
+                     ("publisher", "publisher"), ("pub-location", "publisher-place"), ("language", "language"),
+                     ("abstract", "abstract")):
+        v = en_text(rec, src)
+        if v:
+            csl[dst] = v
+    doi = DOI_RE.search(en_text(rec, "electronic-resource-num"))
+    if doi:
+        csl["DOI"] = doi.group(0).rstrip(".")
+    isbn = en_text(rec, "isbn")
+    if isbn:
+        if csl["type"] in ("article-journal", "article-magazine", "article-newspaper"):
+            m = re.search(r"\d{4}-?\d{3}[\dXx]", isbn)
+            if m:
+                csl["ISSN"] = m.group(0)
         else:
-            missing.append((zk, d, "중복" if hits else "없음"))
-    lib = default_group(a) or "개인"
-    print(f"Zotero 인용 {len(fields)}개, 문헌 {len(zitems)}건 | Mendeley({lib})에서 찾음 {len(mid)} | 못 찾음 {len(missing)}")
-    if missing and not a.add_missing:
-        for _, d, why in missing:
-            print(f"  {why}: {d.get('title', '')[:80]}")
-        fail(EXIT_MISSING, "못 찾은 문헌을 Mendeley에 먼저 넣으려면 --add-missing 을 붙여 다시 실행하세요. 파일은 만들지 않음.")
-    for zk, d, why in missing:
-        if why == "중복":
-            sys.exit(f"Mendeley에 같은 문헌이 여러 건 있어 고를 수 없음: {d.get('title', '')[:80]}")
-        body = csl_to_mendeley(d)
-        if gid:
-            body["group_id"] = gid
-        _, _, new = api("POST", "/documents", body=body)
-        mid[zk] = new["id"]
-        DATA.mkdir(exist_ok=True)
-        with open(DATA / f"to_mendeley_added_{src.stem[:40]}.jsonl", "a", encoding="utf-8") as log:  # 되돌릴 때 휴지통으로 옮길 목록
-            log.write(json.dumps({"id": new["id"], "title": body["title"]}, ensure_ascii=False) + "\n")
-        print(f"  Mendeley에 추가: {new['id']} {body['title'][:70]}")
+            csl["ISBN"] = isbn.split()[0]
+    url = rec.find("urls/related-urls/url")
+    if url is not None and "".join(url.itertext()).strip():
+        csl["URL"] = "".join(url.itertext()).strip()
+    return csl
 
-    edits, mcites = [], []
-    for (s, sep_end, end_start, e, _), c in zip(fields, cites):
-        result = x[sep_end:end_start]
-        text = runs_text(result)
-        sup = 'w:vertAlign w:val="superscript"' in result
+
+def endnote_xml(f):
+    raw = f["data"]
+    if raw:
+        return base64.b64decode(re.sub(r"\s", "", raw)).decode("utf-8", errors="replace").strip("\x00 \r\n")
+    m = re.search(r"<EndNote>.*</EndNote>", f["instr"], re.S)
+    return m.group(0) if m else ""
+
+
+def read_endnote(x):
+    import xml.etree.ElementTree as ET
+    cites = []
+    for f in find_top_fields(x, "ADDIN EN.CITE"):
+        xml = endnote_xml(f)
+        if not xml:
+            print("  주의: 문헌 정보가 없는 EndNote 인용이 있어 건너뜀")
+            continue
         items = []
-        for it in c["citationItems"]:
-            m_id = mid[(it.get("uris") or [str(it.get("id"))])[0]]
-            new_it = {"id": m_id, "itemData": {**it["itemData"], "id": m_id}, "isTemporary": False}
-            new_it.update({k: it[k] for k in CITE_ITEM_EXTRA if k in it})
-            items.append(new_it)
-        obj = {"citationID": f"MENDELEY_CITATION_{uuid.uuid4()}", "properties": {"noteIndex": 0}, "isEdited": False,
-               "manualOverride": {"citeprocText": f"<sup>{text}</sup>" if sup else text,
-                                  "isManuallyOverridden": False, "manualOverrideText": ""},
-               "citationItems": items}
-        tag = CITE_PREFIX + cite_encode(obj)
-        mcites.append({**{k: obj[k] for k in ("citationID", "properties", "isEdited", "manualOverride")},
-                       "citationTag": tag, "citationItems": items})
-        sdt = (f'<w:sdt><w:sdtPr>{first_rpr(result)}<w:tag w:val="{tag}"/><w:id w:val="{secrets.randbelow(2 ** 31)}"/>'
-               f"</w:sdtPr><w:sdtContent>{result}</w:sdtContent></w:sdt>")
-        edits.append((s, e, sdt))
-    for s, sep_end, end_start, e, _ in find_fields(x, "ZOTERO_BIBL"):
-        ps, pe = para_start(x, s), para_end(x, end_start)
-        inner = x[ps:s] + x[sep_end:end_start] + x[e:pe]  # 필드 표시 런만 빼고 단락은 그대로 둔다
-        edits.append((ps, pe, f'<w:sdt><w:sdtPr><w:tag w:val="MENDELEY_BIBLIOGRAPHY"/><w:id w:val="'
-                              f'{secrets.randbelow(2 ** 31)}"/></w:sdtPr><w:sdtContent>{inner}</w:sdtContent></w:sdt>'))
-        print("  참고문헌 목록을 Mendeley 형식으로 바꿈")
-    data["word/document.xml"] = apply_edits(x, edits).encode("utf-8")
+        for c in ET.fromstring(xml).findall("Cite"):
+            rec = c.find("record")
+            csl = en_record_to_csl(rec) if rec is not None else {"title": en_text(c, "Author")}
+            key = rec.find("foreign-keys/key") if rec is not None else None
+            ident = f"en:{key.get('db-id') if key is not None else ''}:{en_text(c, 'RecNum')}"
+            extra = {}
+            for tag, k in (("Prefix", "prefix"), ("Suffix", "suffix"), ("Pages", "locator")):
+                if en_text(c, tag):
+                    extra[k] = en_text(c, tag).replace("`", "")
+            if en_text(c, "ExcludeAuth") == "1":
+                extra["suppress-author"] = True
+            items.append({"key": ident, "csl": csl, "extra": extra})
+        cites.append(cite_from_field(x, f, items))
+    return cites, [bib_from_field(x, f) for f in find_top_fields(x, "ADDIN EN.REFLIST")]
 
-    pref = html.unescape("".join(v for _, v in sorted(re.findall(
-        r'name="ZOTERO_PREF_(\d+)"><vt:lpwstr>(.*?)</vt:lpwstr>', custom_props(data), re.S), key=lambda t: int(t[0]))))
-    sm = re.search(r'<style id="([^"]+)"(?: locale="([^"]*)")?', pref)
-    style_id, locale = (sm.group(1), sm.group(2) or "en-US") if sm else ("http://www.zotero.org/styles/apa", "en-US")
-    title, fmt = style_info(style_id)
-    part = mendeley_webext_part(data)
-    set_webext_props(data, part, {
-        "MENDELEY_BIBLIOGRAPHY_IS_DIRTY": "true",
-        "MENDELEY_BIBLIOGRAPHY_LAST_MODIFIED": str(int(time.time() * 1000)),
-        "MENDELEY_CITATIONS": json.dumps(mcites, separators=(",", ":"), ensure_ascii=False),
-        "MENDELEY_CITATIONS_LOCALE_CODE": json.dumps(locale),
-        "MENDELEY_CITATIONS_STYLE": json.dumps({"id": style_id.replace("http://", "https://"), "title": title,
-                                                "format": fmt, "defaultLocale": None, "isLocaleCodeValid": True},
-                                               separators=(",", ":"), ensure_ascii=False)})
-    if custom_props(data):
-        set_custom_props(data, "ZOTERO_PREF_", {})  # Zotero 가 이 문서를 자기 문서로 보지 않게 한다
-    save_docx(out, infos, data)
-    after = read_docx_citations(out)
-    print(f"스타일: {title} ({fmt}, {locale})\n새 파일 → {out} (Mendeley 인용 문헌 {len(after)}건 재확인)")
-    print(f"CITES={len(fields)}\nADDED={len(missing)}\nOUT={out}")
 
+READERS = {"zotero": read_zotero, "mendeley": read_mendeley, "endnote": read_endnote}
+
+
+# ---------- 문서 설정(스타일) 읽기·지우기 ----------
+
+def docvars(data):
+    st = data.get("word/settings.xml", b"").decode("utf-8")
+    return {n: html.unescape(v) for n, v in re.findall(r'<w:docVar w:name="([^"]+)" w:val="([^"]*)"', st)}
+
+
+def set_docvars(data, remove_prefix, add):
+    """word/settings.xml 의 문서 변수에서 remove_prefix 로 시작하는 것을 지우고 add 를 넣는다."""
+    st = data["word/settings.xml"].decode("utf-8")
+    st = re.sub(r'<w:docVar w:name="' + re.escape(remove_prefix) + r'[^"]*" w:val="[^"]*"/>', "", st)
+    new = "".join(f'<w:docVar w:name="{n}" w:val="{xml_attr_escape(v).replace(">", "&gt;")}"/>' for n, v in add.items())
+    if "<w:docVars>" in st:
+        st = st.replace("</w:docVars>", new + "</w:docVars>")
+    elif new:
+        pos = min((p for p in (st.find(t) for t in AFTER_DOCVARS) if p >= 0))
+        st = st[:pos] + f"<w:docVars>{new}</w:docVars>" + st[pos:]
+    st = st.replace("<w:docVars></w:docVars>", "")
+    data["word/settings.xml"] = st.encode("utf-8")
+
+
+def source_style(data, kinds):
+    """원고에 저장된 인용 스타일을 (CSL 스타일 주소, 로캘)로 돌려준다."""
+    if "zotero" in kinds:
+        pref = html.unescape("".join(v for _, v in sorted(re.findall(
+            r'name="ZOTERO_PREF_(\d+)"><vt:lpwstr>(.*?)</vt:lpwstr>', custom_props(data), re.S), key=lambda t: int(t[0]))))
+        m = re.search(r'<style id="([^"]+)"(?: locale="([^"]*)")?', pref)
+        if m:
+            return m.group(1), m.group(2) or "en-US"
+    if "mendeley" in kinds:
+        for n in data:
+            if re.match(r"word/webextensions/webextension\d+\.xml$", n) and MENDELEY_CITE_ADDIN in data[n].decode("utf-8"):
+                w = data[n].decode("utf-8")
+                sm = re.search(r'name="MENDELEY_CITATIONS_STYLE" value="([^"]*)"', w)
+                lm = re.search(r'name="MENDELEY_CITATIONS_LOCALE_CODE" value="([^"]*)"', w)
+                if sm:
+                    return (json.loads(html.unescape(sm.group(1)))["id"],
+                            json.loads(html.unescape(lm.group(1))) if lm else "en-US")
+    if "endnote" in kinds:
+        m = re.search(r"<Style>(.*?)</Style>", docvars(data).get("EN.Layout", ""))
+        if m:
+            name = m.group(1).lower()
+            for csl_name, en in EN_STYLES.items():
+                if en.lower().split()[0] in name:
+                    return f"http://www.zotero.org/styles/{csl_name}", "en-US"
+    return "http://www.zotero.org/styles/apa", "en-US"
+
+
+def clear_other_formats(data, target):
+    """대상이 아닌 형식의 문서 설정을 지워, 그 프로그램이 이 원고를 자기 원고로 보지 않게 한다."""
+    if target != "zotero" and custom_props(data):
+        set_custom_props(data, "ZOTERO_PREF_", {})
+    if target != "mendeley":
+        for n in list(data):
+            if re.match(r"word/webextensions/webextension\d+\.xml$", n) and MENDELEY_CITE_ADDIN in data[n].decode("utf-8"):
+                set_webext_props(data, n, {"MENDELEY_CITATIONS": "[]"})
+    if target != "endnote" and "word/settings.xml" in data and "EN.Layout" in docvars(data):
+        set_docvars(data, "EN.", {})
+
+
+# ---------- 대상 라이브러리 색인 ----------
 
 def zotero_index():
     """Zotero 문헌을 짝짓기 키로 찾는 색인과 로컬 라이브러리 키."""
@@ -1228,97 +1385,379 @@ def zotero_index():
     return idx, local_key
 
 
-def cmd_to_zotero(a):
-    """Mendeley Cite 로 인용한 원고 사본을 Zotero 원고로 바꾼다."""
-    src, out = Path(a.docx), out_path(a.docx, "_zotero")
-    infos, data = load_docx(src)
-    x = data["word/document.xml"].decode("utf-8")
-    idx, local_key = zotero_index()
-    sdts = find_sdts(x, CITE_PREFIX)
-    cites = [cite_decode(t[len(CITE_PREFIX):]) for _, _, t, _, _ in sdts]
-    found, missing = {}, {}
-    for c in cites:
-        for it in c["citationItems"]:
-            d = it["itemData"]
-            hits = set().union(*(idx.get(k, set()) for k in csl_keys(d))) if csl_keys(d) else set()
-            if len(hits) == 1:
-                found[it["id"]] = next(iter(hits))
-            else:
-                missing[it["id"]] = d
-    print(f"Mendeley 인용 {len(sdts)}개 | Zotero에서 찾음 {len(found)} | 못 찾음 {len(missing)}")
-    if missing:
-        DATA.mkdir(exist_ok=True)
-        mp = DATA / f"to_zotero_missing_{src.stem[:40]}.json"
-        mp.write_text(json.dumps(list(missing.values()), ensure_ascii=False, indent=1), encoding="utf-8")
-        print(f"  못 찾은 문헌 CSL-JSON → {mp}\n  Zotero: 파일 > 가져오기 로 넣은 뒤 다시 실행하면 연결됨")
-        print(f"MISSING={len(missing)}\nMISSING_FILE={mp}")
-        if not a.allow_unlinked:
-            fail(EXIT_MISSING, "연결 없이 문헌 정보만 넣어 바꾸려면 --allow-unlinked 를 붙이세요. 파일은 만들지 않음.")
+def endnote_library():
+    p = conf_raw().get("endnote_library")
+    return Path(p) if p else Path.home() / "Documents" / "My EndNote Library.enl"
 
-    def zitem(it):
-        d = dict(it["itemData"])
-        z = {k: it[k] for k in CITE_ITEM_EXTRA if k in it}
-        if it["id"] in found:
-            iid, key = found[it["id"]]
-            d["id"] = iid
-            return {"id": iid, "uris": [f"http://zotero.org/users/local/{local_key}/items/{key}"], "itemData": d, **z}
-        # Zotero 는 라이브러리에 없는 인용도 uris 가 있어야 문서 안 정보로 다룬다(integration.js loadItemData).
-        # mendeley.com 주소를 쓰면 Mendeley 가져오기 안내 창이 뜨므로 중립 URN 을 쓴다.
-        return {"id": d.get("id", it["id"]), "uris": [f"urn:zotero-mendeley-sync:mendeley:{it['id']}"], "itemData": d, **z}
 
-    def field(rpr, instr, content):
-        r = lambda body: f"<w:r>{rpr}{body}</w:r>"
-        return (r('<w:fldChar w:fldCharType="begin"/>') + r(f'<w:instrText xml:space="preserve">{xml_text_escape(instr)}</w:instrText>')
-                + r('<w:fldChar w:fldCharType="separate"/>') + content + r('<w:fldChar w:fldCharType="end"/>'))
+def endnote_index():
+    """EndNote 라이브러리(.enl, SQLite)를 사본으로 읽어 짝짓기 색인, db-id, 라이브러리 이름을 돌려준다."""
+    lib = endnote_library()
+    if not lib.exists():
+        return defaultdict(set), None, None
+    tmp = Path(tempfile.mkdtemp()) / "lib.enl"
+    shutil.copy2(lib, tmp)
+    con = sqlite3.connect(tmp)
+    dbid = con.execute("select cast(value as text) from misc where code=14").fetchone()
+    idx = defaultdict(set)
+    for rid, author, year, title, erm in con.execute(
+            "select id, author, year, title, electronic_resource_number from refs where trash_state=0"):
+        doi = DOI_RE.search(erm or "")
+        if doi:
+            idx[("doi", norm_doi(doi.group(0).rstrip(".")))].add(rid)
+        first = re.split(r"[\r\n]", author or "")[0].split(",")[0].strip()
+        y = re.search(r"\d{4}", year or "")
+        k = match_key(title, int(y.group(0)) if y else None, first)
+        if k:
+            idx[("tyl", k)].add(rid)
+    con.close()
+    shutil.rmtree(tmp.parent, ignore_errors=True)
+    return idx, (dbid[0] if dbid else None), lib.stem
 
+
+def lookup(idx, csl):
+    keys = sorted(csl_keys(csl), key=lambda k: k[0] != "doi")
+    for k in keys:
+        if len(idx.get(k, ())) == 1:
+            return next(iter(idx[k])), "ok"
+        if len(idx.get(k, ())) > 1:
+            return None, "dup"
+    return None, "none"
+
+
+# ---------- 쓰기 ----------
+
+def run_xml(rpr, body):
+    return f"<w:r>{rpr}{body}</w:r>"
+
+
+def field_xml(rpr, instr, content):
+    r = lambda b: run_xml(rpr, b)
+    return (r('<w:fldChar w:fldCharType="begin"/>') + r(f'<w:instrText xml:space="preserve">{xml_text_escape(instr)}</w:instrText>')
+            + r('<w:fldChar w:fldCharType="separate"/>') + content + r('<w:fldChar w:fldCharType="end"/>'))
+
+
+def bib_field(inner, instr):
+    """참고문헌 단락들을 하나의 필드로 감싼다: 첫 단락 앞에 시작, 마지막 단락 끝에 끝."""
+    paras = list(re.finditer(r"<w:p[ >]", inner))
+    if not paras:
+        return None
+    begin = (run_xml("", '<w:fldChar w:fldCharType="begin"/>')
+             + run_xml("", f'<w:instrText xml:space="preserve">{xml_text_escape(instr)}</w:instrText>')
+             + run_xml("", '<w:fldChar w:fldCharType="separate"/>'))
+    open_end = inner.index(">", paras[0].start()) + 1
+    pp = re.match(r"<w:pPr>.*?</w:pPr>|<w:pPr/>", inner[open_end:], re.S)
+    ins = open_end + (pp.end() if pp else 0)
+    inner = inner[:ins] + begin + inner[ins:]
+    last = inner.rindex("</w:p>")
+    return inner[:last] + run_xml("", '<w:fldChar w:fldCharType="end"/>') + inner[last:]
+
+
+def write_zotero(cites, bibs, links, ctx):
+    local_key = ctx["local_key"]
     edits = []
-    for (s, e, _, pr, inner), c in zip(sdts, cites):
-        text = runs_text(inner)
-        obj = {"citationID": secrets.token_hex(4), "properties": {"formattedCitation": text, "plainCitation": text,
-                                                                 "noteIndex": 0},
-               "citationItems": [zitem(it) for it in c["citationItems"]],
+    for c in cites:
+        items = []
+        for it in c["items"]:
+            d = dict(it["csl"])
+            hit = links.get(it["key"])
+            if hit:
+                iid, key = hit
+                d["id"] = iid
+                items.append({"id": iid, "uris": [f"http://zotero.org/users/local/{local_key}/items/{key}"],
+                              "itemData": d, **it["extra"]})
+            else:
+                # Zotero 는 라이브러리에 없는 인용도 uris 가 있어야 문서 안 정보로 다룬다(integration.js loadItemData).
+                # mendeley.com 주소는 Mendeley 가져오기 안내 창을 띄우므로 중립 URN 을 쓴다.
+                d.setdefault("id", it["key"])
+                items.append({"id": d["id"], "uris": [f"urn:zoteley:{it['key']}"], "itemData": d, **it["extra"]})
+        obj = {"citationID": secrets.token_hex(4),
+               "properties": {"formattedCitation": c["text"], "plainCitation": c["text"], "noteIndex": 0},
+               "citationItems": items,
                "schema": "https://github.com/citation-style-language/schema/raw/master/csl-citation.json"}
-        instr = " ADDIN ZOTERO_ITEM CSL_CITATION " + json.dumps(obj, ensure_ascii=False) + " "
-        edits.append((s, e, field(first_rpr(pr), instr, inner)))
-    for s, e, _, pr, inner in find_sdts(x, "MENDELEY_BIBLIOGRAPHY"):
-        paras = list(re.finditer(r"<w:p[ >]", inner))
-        if not paras:
-            print("  주의: 참고문헌 목록에 단락이 없어 바꾸지 않음")
-            continue
-        r = lambda body: f"<w:r>{body}</w:r>"
-        begin = (r('<w:fldChar w:fldCharType="begin"/>') + r('<w:instrText xml:space="preserve"> ADDIN ZOTERO_BIBL '
-                 '{"uncited":[],"omitted":[],"custom":[]} CSL_BIBLIOGRAPHY </w:instrText>') + r('<w:fldChar w:fldCharType="separate"/>'))
-        p0 = paras[0].start()
-        open_end = inner.index(">", p0) + 1
-        pp = re.match(r"<w:pPr>.*?</w:pPr>|<w:pPr/>", inner[open_end:], re.S)
-        ins = open_end + (pp.end() if pp else 0)
-        inner = inner[:ins] + begin + inner[ins:]
-        last = inner.rindex("</w:p>")
-        inner = inner[:last] + r('<w:fldChar w:fldCharType="end"/>') + inner[last:]
-        edits.append((s, e, inner))
-        print("  참고문헌 목록을 Zotero 형식으로 바꿈")
-    data["word/document.xml"] = apply_edits(x, edits).encode("utf-8")
+        edits.append((c["s"], c["e"], field_xml(c["rpr"], " ADDIN ZOTERO_ITEM CSL_CITATION "
+                                                 + json.dumps(obj, ensure_ascii=False) + " ", c["result"])))
+    for b in bibs:
+        new = bib_field(b["inner"], ' ADDIN ZOTERO_BIBL {"uncited":[],"omitted":[],"custom":[]} CSL_BIBLIOGRAPHY ')
+        if new:
+            edits.append((b["s"], b["e"], new))
+    return edits
 
-    style = {"id": "http://www.zotero.org/styles/apa"}
-    locale = "en-US"
-    for n in data:
-        if re.match(r"word/webextensions/webextension\d+\.xml$", n) and MENDELEY_CITE_ADDIN in data[n].decode("utf-8"):
-            w = data[n].decode("utf-8")
-            sm = re.search(r'name="MENDELEY_CITATIONS_STYLE" value="([^"]*)"', w)
-            lm = re.search(r'name="MENDELEY_CITATIONS_LOCALE_CODE" value="([^"]*)"', w)
-            style = json.loads(html.unescape(sm.group(1))) if sm else style
-            locale = json.loads(html.unescape(lm.group(1))) if lm else locale
-            set_webext_props(data, n, {"MENDELEY_CITATIONS": "[]"})  # Mendeley Cite 에 옛 인용 목록이 남지 않게
-    sid = style["id"].replace("https://www.zotero.org", "http://www.zotero.org")
+
+def finish_zotero(data, style_id, locale, ctx):
+    sid = style_id.replace("https://www.zotero.org", "http://www.zotero.org")
     pref = (f'<data data-version="3" zotero-version="7.0"><session id="{secrets.token_urlsafe(6)[:8]}"/>'
             f'<style id="{sid}" locale="{locale}" hasBibliography="1" bibliographyStyleHasBeenSet="1"/>'
             '<prefs><pref name="fieldType" value="Field"/></prefs></data>')
-    chunks = [pref[i:i + 255] for i in range(0, len(pref), 255)]
-    set_custom_props(data, "ZOTERO_PREF_", {f"ZOTERO_PREF_{i + 1}": ch for i, ch in enumerate(chunks)})
+    set_custom_props(data, "ZOTERO_PREF_", {f"ZOTERO_PREF_{i // 255 + 1}": pref[i:i + 255] for i in range(0, len(pref), 255)})
+    return sid
+
+
+def write_mendeley(cites, bibs, links, ctx):
+    edits, mcites = [], []
+    for c in cites:
+        sup = 'w:vertAlign w:val="superscript"' in c["result"]
+        items = []
+        for it in c["items"]:
+            m_id = links[it["key"]]
+            items.append({"id": m_id, "itemData": {**it["csl"], "id": m_id}, "isTemporary": False, **it["extra"]})
+        obj = {"citationID": f"MENDELEY_CITATION_{uuid.uuid4()}", "properties": {"noteIndex": 0}, "isEdited": False,
+               "manualOverride": {"citeprocText": f"<sup>{c['text']}</sup>" if sup else c["text"],
+                                  "isManuallyOverridden": False, "manualOverrideText": ""},
+               "citationItems": items}
+        tag = CITE_PREFIX + cite_encode(obj)
+        mcites.append({**{k: obj[k] for k in ("citationID", "properties", "isEdited", "manualOverride")},
+                       "citationTag": tag, "citationItems": items})
+        edits.append((c["s"], c["e"], f'<w:sdt><w:sdtPr>{c["rpr"]}<w:tag w:val="{tag}"/><w:id w:val="'
+                                      f'{secrets.randbelow(2 ** 31)}"/></w:sdtPr><w:sdtContent>{c["result"]}'
+                                      "</w:sdtContent></w:sdt>"))
+    for b in bibs:
+        edits.append((b["s"], b["e"], f'<w:sdt><w:sdtPr><w:tag w:val="MENDELEY_BIBLIOGRAPHY"/><w:id w:val="'
+                                      f'{secrets.randbelow(2 ** 31)}"/></w:sdtPr><w:sdtContent>{b["inner"]}'
+                                      "</w:sdtContent></w:sdt>"))
+    ctx["mcites"] = mcites
+    return edits
+
+
+def finish_mendeley(data, style_id, locale, ctx):
+    title, fmt = style_info(style_id)
+    part = mendeley_webext_part(data)
+    set_webext_props(data, part, {
+        "MENDELEY_BIBLIOGRAPHY_IS_DIRTY": "true",
+        "MENDELEY_BIBLIOGRAPHY_LAST_MODIFIED": str(int(time.time() * 1000)),
+        "MENDELEY_CITATIONS": json.dumps(ctx["mcites"], separators=(",", ":"), ensure_ascii=False),
+        "MENDELEY_CITATIONS_LOCALE_CODE": json.dumps(locale),
+        "MENDELEY_CITATIONS_STYLE": json.dumps({"id": style_id.replace("http://", "https://"), "title": title,
+                                                "format": fmt, "defaultLocale": None, "isLocaleCodeValid": True},
+                                               separators=(",", ":"), ensure_ascii=False)})
+    return title
+
+
+def x_esc(s):
+    return xml_text_escape(str(s))
+
+
+def en_record_xml(csl, rec_no, dbid):
+    """CSL-JSON 한 건을 EndNote XML <record> 로 쓴다. 요소 순서는 EndNote XML 정의를 따른다."""
+    name, num = EN_TYPES.get(csl.get("type"), ("Generic", 13))
+    tag = lambda t, v: f"<{t}>{x_esc(v)}</{t}>" if v not in (None, "", []) else ""
+    who = lambda p: f"{p['family']}, {p.get('given', '')}".rstrip(", ") if p.get("family") else p.get("literal", "")
+    authors = "".join(tag("author", who(p)) for p in csl.get("author") or [])
+    editors = "".join(tag("author", who(p)) for p in csl.get("editor") or [])
+    contrib = (f"<authors>{authors}</authors>" if authors else "") + (f"<secondary-authors>{editors}</secondary-authors>" if editors else "")
+    container = csl.get("container-title", "")
+    year = csl_year(csl)
+    parts = ((csl.get("issued") or {}).get("date-parts") or [[]])[0]
+    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    month = ""
+    try:
+        month = months[int(parts[1]) - 1] if len(parts) > 1 else ""
+    except (ValueError, IndexError):
+        pass
+    isbn = csl.get("ISSN") or csl.get("ISBN") or ""
+    url = csl.get("URL", "")
+    return (f"<rec-number>{rec_no}</rec-number>"
+            f'<foreign-keys><key app="EN" db-id="{dbid}">{rec_no}</key></foreign-keys>'
+            f'<ref-type name="{name}">{num}</ref-type>'
+            + (f"<contributors>{contrib}</contributors>" if contrib else "")
+            + f"<titles>{tag('title', csl.get('title', ''))}{tag('secondary-title', container)}</titles>"
+            + (f"<periodical><full-title>{x_esc(container)}</full-title></periodical>"
+               if container and csl.get("type") in ("article-journal", "article-magazine", "article-newspaper") else "")
+            + tag("pages", csl.get("page")) + tag("volume", csl.get("volume")) + tag("number", csl.get("issue"))
+            + tag("edition", csl.get("edition"))
+            + (f"<dates>{tag('year', year)}" + (f"<pub-dates>{tag('date', month)}</pub-dates>" if month else "") + "</dates>"
+               if year else "")
+            + tag("pub-location", csl.get("publisher-place")) + tag("publisher", csl.get("publisher"))
+            + tag("isbn", isbn) + tag("electronic-resource-num", csl.get("DOI")) + tag("abstract", csl.get("abstract"))
+            + tag("language", csl.get("language"))
+            + (f"<urls><related-urls>{tag('url', url)}</related-urls></urls>" if url else ""))
+
+
+def write_endnote(cites, bibs, links, ctx):
+    edits = []
+    for c in cites:
+        parts = []
+        for i, it in enumerate(c["items"]):
+            rec_no, dbid = links[it["key"]]
+            csl = it["csl"]
+            first = (csl.get("author") or [{}])[0]
+            ex = it["extra"]
+            parts.append(
+                "<Cite>" + (f"<Author>{x_esc(first.get('family') or first.get('literal') or '')}</Author>")
+                + (f"<Year>{csl_year(csl) or ''}</Year>") + (f"<RecNum>{rec_no}</RecNum>")
+                + (f"<Prefix>{x_esc(ex['prefix'])}</Prefix>" if ex.get("prefix") else "")
+                + (f"<Suffix>{x_esc(ex['suffix'])}</Suffix>" if ex.get("suffix") else "")
+                + (f"<Pages>{x_esc(ex['locator'])}</Pages>" if ex.get("locator") else "")
+                + ("<ExcludeAuth>1</ExcludeAuth>" if ex.get("suppress-author") else "")
+                + (f"<DisplayText>{x_esc(c['text'])}</DisplayText>" if i == 0 else "")
+                + f"<record>{en_record_xml(csl, rec_no, dbid)}</record></Cite>")
+        b64 = base64.b64encode(("<EndNote>" + "".join(parts) + "</EndNote>").encode("utf-8")).decode()
+        rpr = c["rpr"]
+        data_begin = f'<w:fldChar w:fldCharType="begin"><w:fldData xml:space="preserve">{b64}</w:fldData></w:fldChar>'
+        # EndNote 와 같은 모양: 바깥 EN.CITE 필드 안에 같은 데이터를 담은 EN.CITE.DATA 필드를 둔다
+        xml = (run_xml(rpr, data_begin) + run_xml(rpr, '<w:instrText xml:space="preserve"> ADDIN EN.CITE </w:instrText>')
+               + run_xml(rpr, data_begin) + run_xml(rpr, '<w:instrText xml:space="preserve"> ADDIN EN.CITE.DATA </w:instrText>')
+               + run_xml(rpr, '<w:fldChar w:fldCharType="end"/>') + run_xml(rpr, '<w:fldChar w:fldCharType="separate"/>')
+               + c["result"] + run_xml(rpr, '<w:fldChar w:fldCharType="end"/>'))
+        edits.append((c["s"], c["e"], xml))
+    for b in bibs:
+        new = bib_field(b["inner"], " ADDIN EN.REFLIST ")
+        if new:
+            edits.append((b["s"], b["e"], new))
+    return edits
+
+
+def finish_endnote(data, style_id, locale, ctx):
+    name = EN_STYLES.get(style_id.rstrip("/").split("/")[-1], "APA 7th")
+    libs = defaultdict(list)
+    for rec_no, dbid in ctx["en_links"].values():
+        libs[dbid].append(rec_no)
+    items = "".join(f'<item db-id="{d}">{x_esc(ctx["en_lib_name"] if d == ctx["en_dbid"] else "Zoteley")}<record-ids>'
+                    + "".join(f"<item>{n}</item>" for n in sorted(set(r))) + "</record-ids></item>"
+                    for d, r in libs.items())
+    set_docvars(data, "EN.", {"EN.InstantFormat": EN_INSTANT, "EN.Layout": EN_LAYOUT.format(style=name),
+                              "EN.Libraries": f"<Libraries>{items}</Libraries>"})
+    return name
+
+
+# ---------- 변환 명령 ----------
+
+def detect_counts(x):
+    return {k: len(READERS[k](x)[0]) for k in FORMATS}
+
+
+def cmd_convert(a):
+    """원고의 인용을 대상 형식(--to)으로 바꾼다. 원본 형식은 원고를 보고 알아낸다."""
+    target = a.to
+    src, out = Path(a.docx), out_path(a.docx, "_" + target)
+    infos, data = load_docx(src)
+    x = data["word/document.xml"].decode("utf-8")
+    for n in data:
+        if n != "word/document.xml" and n.startswith("word/") and n.endswith(".xml") and \
+                re.search(rb"ZOTERO_ITEM|MENDELEY_CITATION_v3_|EN\.CITE", data[n] or b""):
+            print(f"  주의: {n} 의 인용(각주 등)은 바꾸지 않음")
+    cites, bibs, kinds = [], [], []
+    for k in FORMATS:
+        if k == target:
+            continue
+        c, b = READERS[k](x)
+        if c or b:
+            kinds.append(k)
+        cites += c
+        bibs += b
+    if not cites:
+        fail(1, f"{FORMAT_NAME[target]}로 바꿀 다른 형식의 인용이 없음")
+    style_id, locale = source_style(data, kinds)
+    # 같은 문헌은 한 번만 짝짓는다
+    uniq = {}
+    for c in cites:
+        for it in c["items"]:
+            uniq.setdefault(it["key"], it["csl"])
+    links, missing = {}, []
+    ctx = {}
+    if target == "mendeley":
+        if getattr(a, "add_missing", False):
+            # 오래된 백업으로 짝지으면 이미 있는 문헌을 또 추가한다(2026-10-15 중복 6건). 추가 전에 항상 새로 받는다.
+            cmd_pull(a)
+        backup = json.loads(latest("backup_*.json").read_text(encoding="utf-8"))
+        gid, docs = target_library(backup, default_group(a))
+        idx = defaultdict(set)
+        for d in docs:
+            for k in doc_keys(d):
+                idx[k].add(d["id"])
+        for key, csl in uniq.items():
+            hit, why = lookup(idx, csl)
+            if hit:
+                links[key] = hit
+            else:
+                missing.append((key, csl, why))
+    elif target == "zotero":
+        idx, ctx["local_key"] = zotero_index()
+        for key, csl in uniq.items():
+            hit, why = lookup(idx, csl)
+            if hit:
+                links[key] = hit
+            else:
+                missing.append((key, csl, why))
+    else:
+        idx, ctx["en_dbid"], ctx["en_lib_name"] = endnote_index()
+        for key, csl in uniq.items():
+            hit, why = lookup(idx, csl) if ctx["en_dbid"] else (None, "none")
+            if hit:
+                links[key] = (hit, ctx["en_dbid"])
+            else:
+                missing.append((key, csl, why))
+    src_names = "·".join(FORMAT_NAME[k] for k in kinds)
+    print(f"{src_names} 인용 {len(cites)}개, 문헌 {len(uniq)}건 | {FORMAT_NAME[target]}에서 찾음 {len(links)} | 못 찾음 {len(missing)}")
+    DATA.mkdir(exist_ok=True)
+
+    if missing and target == "mendeley":
+        if not a.add_missing:
+            for _, d, why in missing:
+                print(f"  {'중복' if why == 'dup' else '없음'}: {d.get('title', '')[:80]}")
+            print(f"MISSING={len(missing)}")
+            fail(EXIT_MISSING, "못 찾은 문헌을 Mendeley에 먼저 넣으려면 --add-missing 을 붙여 다시 실행하세요. 파일은 만들지 않음.")
+        for key, d, why in missing:
+            if why == "dup":
+                fail(1, f"Mendeley에 같은 문헌이 여러 건 있어 고를 수 없음: {d.get('title', '')[:80]}")
+            body = csl_to_mendeley(d)
+            if gid:
+                body["group_id"] = gid
+            _, _, new = api("POST", "/documents", body=body)
+            links[key] = new["id"]
+            with open(DATA / f"to_mendeley_added_{src.stem[:40]}.jsonl", "a", encoding="utf-8") as log:  # 되돌릴 때 휴지통으로 옮길 목록
+                log.write(json.dumps({"id": new["id"], "title": body["title"]}, ensure_ascii=False) + "\n")
+            print(f"  Mendeley에 추가: {new['id']} {body['title'][:70]}")
+    elif missing:
+        if target == "zotero":
+            mp = DATA / f"to_zotero_missing_{src.stem[:40]}.json"
+            mp.write_text(json.dumps([d for _, d, _ in missing], ensure_ascii=False, indent=1), encoding="utf-8")
+            print(f"  못 찾은 문헌 CSL-JSON → {mp}\n  Zotero: 파일 > 가져오기 로 넣은 뒤 다시 실행하면 연결됨")
+        else:
+            mp = DATA / f"to_endnote_missing_{src.stem[:40]}.xml"
+            recs = "".join(f"<record>{en_record_xml(d, i + 1, 'zoteley')}</record>" for i, (_, d, _) in enumerate(missing))
+            mp.write_text(f'<?xml version="1.0" encoding="UTF-8"?><xml><records>{recs}</records></xml>', encoding="utf-8")
+            print(f"  못 찾은 문헌 EndNote XML → {mp}\n  EndNote: File > Import > File 에서 'EndNote generated XML'로 넣은 뒤 다시 실행하면 연결됨")
+        print(f"MISSING={len(missing)}\nMISSING_FILE={mp}")
+        if not a.allow_unlinked:
+            fail(EXIT_MISSING, "연결 없이 문헌 정보만 넣어 바꾸려면 --allow-unlinked 를 붙이세요. 파일은 만들지 않음.")
+        if target == "endnote":
+            # 라이브러리에 없는 문헌은 별도 db-id 로 두어, 내 라이브러리의 다른 레코드에 잘못 연결되지 않게 한다
+            travel = "zoteley" + secrets.token_hex(15)
+            for i, (key, _, _) in enumerate(missing):
+                links[key] = (i + 1, travel)
+
+    if target == "endnote":
+        ctx["en_links"] = {k: v for k, v in links.items()}
+    writer, finisher = {"zotero": (write_zotero, finish_zotero), "mendeley": (write_mendeley, finish_mendeley),
+                        "endnote": (write_endnote, finish_endnote)}[target]
+    edits = writer(cites, bibs, links, ctx)
+    data["word/document.xml"] = apply_edits(x, edits).encode("utf-8")
+    style_name = finisher(data, style_id, locale, ctx)
+    clear_other_formats(data, target)
+    if bibs:
+        print(f"  참고문헌 목록을 {FORMAT_NAME[target]} 형식으로 바꿈")
     save_docx(out, infos, data)
-    n_after = len(find_fields(data["word/document.xml"].decode("utf-8"), "ZOTERO_ITEM"))
-    print(f"스타일: {sid} ({locale})\n새 파일 → {out} (Zotero 인용 {n_after}개 재확인)")
-    print(f"CITES={n_after}\nUNLINKED={len(missing)}\nOUT={out}")
+    after = READERS[target](load_docx(out)[1]["word/document.xml"].decode("utf-8"))[0]
+    print(f"스타일: {style_name} ({locale})\n새 파일 → {out} ({FORMAT_NAME[target]} 인용 {len(after)}개 재확인)")
+    print(f"SOURCE={','.join(kinds)}\nCITES={len(after)}")
+    print(f"ADDED={len(missing)}" if target == "mendeley" else f"UNLINKED={len(missing)}")
+    print(f"OUT={out}")
+
+
+def cmd_to_mendeley(a):
+    a.to = "mendeley"
+    cmd_convert(a)
+
+
+def cmd_to_zotero(a):
+    a.to = "zotero"
+    cmd_convert(a)
+
+
+def cmd_to_endnote(a):
+    a.to = "endnote"
+    cmd_convert(a)
 
 
 # ---------- 앱용 보조 명령 ----------
@@ -1346,18 +1785,19 @@ def cmd_status(a):
     print(f"ZOTERO_DB={'ok' if zotero_db().exists() else 'missing'}")
     print(f"GROUP={c.get('group') or ''}")
     print(f"REDIRECT={c.get('redirect_uri') or REDIRECT_DEFAULT}")
+    print(f"ENDNOTE_LIB={endnote_library()}")
+    print(f"ENDNOTE={'ok' if endnote_library().exists() else 'missing'}")
 
 
 def cmd_detect(a):
-    """원고가 Zotero 인용인지 Mendeley 인용인지 알려 준다."""
-    z = m = 0
+    """원고에 어떤 형식의 인용이 몇 개 있는지 알려 준다."""
     with zipfile.ZipFile(a.docx) as zin:
-        for n in docx_parts(zin):
-            x = zin.read(n).decode("utf-8")
-            z += len(find_fields(x, "ZOTERO_ITEM"))
-            m += len(find_sdts(x, CITE_PREFIX))
-    print(f"ZOTERO={z}\nMENDELEY={m}")
-    print("KIND=" + ("both" if z and m else "zotero" if z else "mendeley" if m else "none"))
+        x = zin.read("word/document.xml").decode("utf-8")
+    counts = detect_counts(x)
+    for k in FORMATS:
+        print(f"{k.upper()}={counts[k]}")
+    present = [k for k in FORMATS if counts[k]]
+    print("KIND=" + (present[0] if len(present) == 1 else "mixed" if present else "none"))
 
 
 def cmd_groups(a):
@@ -1421,6 +1861,7 @@ def main():
     cf = sub.add_parser("config", help="설정 저장 (옵션 없으면 터미널에서 묻기)")
     cf.add_argument("--client-id")
     cf.add_argument("--zotero-dir")
+    cf.add_argument("--endnote-library", help="EndNote 라이브러리 .enl 파일")
     cf.add_argument("--group", help="기본 Mendeley 그룹 이름 (빈 문자열이면 개인 라이브러리)")
     cf.set_defaults(fn=cmd_config)
     au = sub.add_parser("auth")
@@ -1464,6 +1905,17 @@ def main():
     tz.add_argument("docx")
     tz.add_argument("--allow-unlinked", action="store_true", help="Zotero에 없는 문헌도 문서 안 정보로 바꿈")
     tz.set_defaults(fn=cmd_to_zotero)
+    te = sub.add_parser("to-endnote", help="Zotero·Mendeley 원고 사본 → EndNote 원고(_endnote.docx)")
+    te.add_argument("docx")
+    te.add_argument("--allow-unlinked", action="store_true", help="EndNote 라이브러리에 없는 문헌도 문서 안 정보로 바꿈")
+    te.set_defaults(fn=cmd_to_endnote)
+    cv = sub.add_parser("convert", help="원고 인용을 다른 형식으로 (원본 형식은 자동 감지)")
+    cv.add_argument("docx")
+    cv.add_argument("--to", required=True, choices=FORMATS)
+    cv.add_argument("--group", help="Mendeley 대상 그룹 이름")
+    cv.add_argument("--add-missing", action="store_true", help="(Mendeley) 없는 문헌을 먼저 추가")
+    cv.add_argument("--allow-unlinked", action="store_true", help="(Zotero·EndNote) 없는 문헌도 문서 안 정보로")
+    cv.set_defaults(fn=cmd_convert)
     a = p.parse_args()
     CONF_DIR.mkdir(parents=True, exist_ok=True)
     a.fn(a)

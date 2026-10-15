@@ -50,32 +50,31 @@ HELP_URL = "https://github.com/hspark-rm/zoteley#readme"
 
 KO = QLocale.system().name().startswith("ko")
 T = {
-    "subtitle": ("Zotero ↔ Mendeley Cite 원고 변환", "Convert Word manuscripts between Zotero and Mendeley Cite"),
+    "subtitle": ("Zotero · Mendeley · EndNote 원고 인용 변환", "Convert Word manuscript citations between Zotero, Mendeley and EndNote"),
     "drop": ("Word 원고(.docx)를 여기에 끌어다 놓으세요", "Drop a Word manuscript (.docx) here"),
     "choose": ("파일 선택…", "Choose file…"),
-    "send": ("Mendeley로 보내기", "Send to Mendeley"),
-    "send_sub": ("Zotero 원고 → Mendeley 원고", "Zotero → Mendeley Cite"),
-    "recv": ("Zotero로 받기", "Receive into Zotero"),
-    "recv_sub": ("Mendeley 원고 → Zotero 원고", "Mendeley Cite → Zotero"),
+    "to_zotero": ("Zotero 원고로", "To Zotero"),
+    "to_mendeley": ("Mendeley 원고로", "To Mendeley"),
+    "to_endnote": ("EndNote 원고로", "To EndNote"),
+    "to_sub": ("{src} → {dst}", "{src} → {dst}"),
     "settings": ("설정", "Settings"),
     "help": ("도움말", "Help"),
-    "kind_zotero": ("Zotero 인용 {n}개", "{n} Zotero citations"),
-    "kind_mendeley": ("Mendeley 인용 {n}개", "{n} Mendeley citations"),
-    "kind_both": ("Zotero 인용 {z}개 · Mendeley 인용 {m}개", "{z} Zotero · {m} Mendeley citations"),
+    "kind_one": ("{fmt} 인용 {n}개", "{n} {fmt} citations"),
+    "kind_mixed": ("여러 형식이 섞인 원고: {parts}", "Mixed citations: {parts}"),
     "kind_none": ("인용이 없는 원고입니다", "No citations found in this manuscript"),
     "only_docx": ("Word 원고(.docx)만 바꿀 수 있습니다.", "Only Word manuscripts (.docx) can be converted."),
-    "working_send": ("Mendeley 라이브러리를 확인하고 바꾸는 중…", "Checking your Mendeley library and converting…"),
-    "working_recv": ("Zotero 라이브러리와 맞춰 보는 중…", "Matching against your Zotero library…"),
+    "working": ("{fmt} 형식으로 바꾸는 중…", "Converting to {fmt}…"),
     "working_import": ("Zotero에 문헌을 넣는 중…", "Adding references to Zotero…"),
-    "done_send": ("인용 {n}개를 Mendeley 형식으로 바꿨습니다.", "Converted {n} citations to Mendeley format."),
-    "done_send_added": ("Mendeley에 없던 문헌 {n}건을 라이브러리에 추가했습니다.",
-                        "Added {n} references that were missing from Mendeley."),
-    "done_send_tip": ("Word에서 Mendeley Cite를 열고 참고문헌을 한 번 새로고침하세요.",
-                      "Open Mendeley Cite in Word and refresh the bibliography once."),
-    "done_recv": ("인용 {n}개를 Zotero 형식으로 바꿨습니다.", "Converted {n} citations to Zotero format."),
-    "done_recv_unl": ("Zotero에 없는 문헌 {n}건은 문서 안 정보로 넣었습니다.",
-                      "{n} references not in Zotero were kept as embedded data."),
-    "done_recv_tip": ("Word의 Zotero 메뉴에서 Refresh를 한 번 누르세요.", "Click Refresh in Word's Zotero tab once."),
+    "done": ("인용 {n}개를 {fmt} 형식으로 바꿨습니다.", "Converted {n} citations to {fmt} format."),
+    "done_added": ("Mendeley에 없던 문헌 {n}건을 라이브러리에 추가했습니다.",
+                   "Added {n} references that were missing from Mendeley."),
+    "done_unl": ("{fmt} 라이브러리에 없는 문헌 {n}건은 문서 안 정보로 넣었습니다.",
+                 "{n} references not in your {fmt} library were kept as embedded data."),
+    "tip_mendeley": ("Word에서 Mendeley Cite를 열고 참고문헌을 한 번 새로고침하세요.",
+                     "Open Mendeley Cite in Word and refresh the bibliography once."),
+    "tip_zotero": ("Word의 Zotero 메뉴에서 Refresh를 한 번 누르세요.", "Click Refresh in Word's Zotero tab once."),
+    "tip_endnote": ("Word의 EndNote 메뉴에서 Update Citations and Bibliography를 한 번 누르세요.",
+                    "Click Update Citations and Bibliography in Word's EndNote tab once."),
     "new_file": ("새 파일: {f}", "New file: {f}"),
     "open_word": ("Word로 열기", "Open in Word"),
     "reveal": ("폴더에서 보기", "Show in folder"),
@@ -87,15 +86,21 @@ T = {
                   "there? They go into the collection currently selected in Zotero."),
     "add_and_convert": ("Zotero에 넣고 바꾸기", "Add to Zotero and convert"),
     "convert_only": ("넣지 않고 바꾸기", "Convert without adding"),
+    "en_missing_q": ("EndNote 라이브러리에 없는 문헌이 {n}건 있습니다.\n\n문서 안 정보로 넣고 바꿀 수 있습니다. "
+                     "라이브러리에 넣으려면 가져오기 파일을 EndNote에서 File > Import > File('EndNote generated XML')로 넣은 뒤 다시 바꾸세요.",
+                     "{n} cited references are not in your EndNote library.\n\nYou can convert now and keep them as embedded data. "
+                     "To add them to your library, import the file in EndNote via File > Import > File ('EndNote generated XML') and convert again."),
+    "show_import_file": ("가져오기 파일 보기", "Show import file"),
     "zotero_off": ("Zotero가 열려 있어야 문헌을 넣을 수 있습니다. Zotero를 연 뒤 다시 시도하세요.",
                    "Zotero must be running to add references. Open Zotero and try again."),
     "retry": ("다시 시도", "Try again"),
     "error": ("작업 중 오류가 났습니다.", "Something went wrong."),
     "need_login": ("Mendeley 로그인이 필요합니다.", "You need to sign in to Mendeley."),
     "need_setup": ("처음 한 번 설정이 필요합니다.", "First-time setup is needed."),
-    "status_ok": ("Mendeley 연결됨 · Zotero: {z}", "Mendeley connected · Zotero: {z}"),
-    "status_nologin": ("Mendeley 로그인 필요 · Zotero: {z}", "Mendeley sign-in needed · Zotero: {z}"),
-    "status_nokeys": ("Mendeley 설정 필요", "Mendeley setup needed"),
+    "status": ("Zotero {z} · Mendeley {m} · EndNote {e}", "Zotero {z} · Mendeley {m} · EndNote {e}"),
+    "st_ok": ("✓", "✓"),
+    "st_login": ("로그인 필요", "sign-in needed"),
+    "st_none": ("미설정", "not set"),
     # 설정 창
     "s_title": ("설정", "Settings"),
     "s_mendeley": ("1. Mendeley 연결", "1. Connect Mendeley"),
@@ -123,6 +128,9 @@ T = {
     "s_target": ("3. Mendeley로 보낼 때 문헌을 넣을 곳", "3. Where to add references when sending to Mendeley"),
     "s_personal": ("내 개인 라이브러리", "My personal library"),
     "s_load_groups": ("그룹 불러오기", "Load groups"),
+    "s_endnote": ("4. EndNote 라이브러리 (EndNote로 바꿀 때만, 선택)", "4. EndNote library (only for converting to EndNote, optional)"),
+    "s_endnote_tip": ("고르면 인용을 내 EndNote 라이브러리의 문헌과 연결합니다.", "If set, citations are linked to records in your EndNote library."),
+    "s_bad_endnote": ("EndNote 라이브러리(.enl) 파일을 고르세요.", "Choose an EndNote library (.enl) file."),
     "s_close": ("닫기", "Close"),
     "s_state_ok": ("로그인됨", "Signed in"),
     "s_state_no": ("로그인 안 됨", "Not signed in"),
@@ -344,6 +352,21 @@ class SettingsDialog(QDialog):
         f3.addWidget(load)
         lay.addWidget(g3)
 
+        g4 = QGroupBox(tr("s_endnote"))
+        f4 = QVBoxLayout(g4)
+        row4 = QHBoxLayout()
+        self.enl = QLineEdit(str(zms.endnote_library()))
+        self.enl.setReadOnly(True)
+        browse4 = QPushButton(tr("s_browse"))
+        browse4.clicked.connect(self.choose_endnote)
+        row4.addWidget(self.enl)
+        row4.addWidget(browse4)
+        f4.addLayout(row4)
+        tip4 = QLabel(tr("s_endnote_tip"))
+        tip4.setStyleSheet("color: gray;")
+        f4.addWidget(tip4)
+        lay.addWidget(g4)
+
         close = QPushButton(tr("s_close"))
         close.clicked.connect(self.accept)
         lay.addWidget(close, alignment=Qt.AlignRight)
@@ -387,6 +410,19 @@ class SettingsDialog(QDialog):
         code, out = zms.run(["config", "--zotero-dir", d])
         if code == 0:
             self.zdir.setText(d)
+        else:
+            show_error(self, code, out)
+
+    def choose_endnote(self):
+        f, _ = QFileDialog.getOpenFileName(self, tr("s_endnote"), str(Path(self.enl.text()).parent), "EndNote (*.enl)")
+        if not f:
+            return
+        if not f.lower().endswith(".enl"):
+            QMessageBox.warning(self, APP, tr("s_bad_endnote"))
+            return
+        code, out = zms.run(["config", "--endnote-library", f])
+        if code == 0:
+            self.enl.setText(f)
         else:
             show_error(self, code, out)
 
@@ -504,12 +540,12 @@ class Main(QWidget):
         lay.addWidget(self.file_label)
 
         acts = QHBoxLayout()
-        self.send_btn = self.action_button(tr("send"), tr("send_sub"), "#a4161a")
-        self.recv_btn = self.action_button(tr("recv"), tr("recv_sub"), "#2f6feb")
-        self.send_btn.clicked.connect(self.send)
-        self.recv_btn.clicked.connect(self.receive)
-        acts.addWidget(self.send_btn)
-        acts.addWidget(self.recv_btn)
+        self.buttons = {}
+        for fmt, color in (("zotero", "#a4161a"), ("mendeley", "#2f6feb"), ("endnote", "#3d4451")):
+            b = self.action_button(tr("to_" + fmt), "", color)
+            b.clicked.connect(lambda _=False, f=fmt: self.convert(f))
+            acts.addWidget(b)
+            self.buttons[fmt] = b
         lay.addLayout(acts)
 
         self.busy = QLabel()
@@ -541,43 +577,55 @@ class Main(QWidget):
 
     def set_busy(self, msg):
         self.busy.setText(msg or "")
-        for w in (self.send_btn, self.recv_btn, self.drop):
+        for w in list(self.buttons.values()) + [self.drop]:
             w.setEnabled(msg is None)
         if msg is None:
             self.update_actions(getattr(self, "kind", None))
 
     def refresh_status(self):
         _, out = zms.run(["status"])
-        z = value(out, "ZOTERO_DIR")
+        z = tr("st_ok") if value(out, "ZOTERO_DB") == "ok" else tr("st_none")
         if value(out, "MENDELEY_KEYS") != "ok":
-            self.status.setText(tr("status_nokeys"))
-        elif value(out, "MENDELEY_LOGIN") != "ok":
-            self.status.setText(tr("status_nologin", z=z))
+            m = tr("st_none")
         else:
-            self.status.setText(tr("status_ok", z=z))
+            m = tr("st_ok") if value(out, "MENDELEY_LOGIN") == "ok" else tr("st_login")
+        e = tr("st_ok") if value(out, "ENDNOTE") == "ok" else tr("st_none")
+        self.status.setText(tr("status", z=z, m=m, e=e))
         return out
 
-    def ensure_setup(self):
+    def ensure_ready(self, target):
+        """대상 형식에 필요한 준비만 확인한다. Mendeley 로 바꿀 때만 Mendeley 로그인이 필요하다."""
         out = self.refresh_status()
-        if value(out, "MENDELEY_KEYS") != "ok" or value(out, "ZOTERO_DB") != "ok":
+        if target == "zotero" and value(out, "ZOTERO_DB") != "ok":
             SettingsDialog(self, welcome=True).exec()
-            out = self.refresh_status()
-        if value(out, "MENDELEY_KEYS") != "ok" or value(out, "ZOTERO_DB") != "ok":
-            return False
-        if value(out, "MENDELEY_LOGIN") != "ok":
-            ok = login(self)
-            self.refresh_status()
-            return ok
+            return value(self.refresh_status(), "ZOTERO_DB") == "ok"
+        if target == "mendeley":
+            if value(out, "MENDELEY_KEYS") != "ok":
+                SettingsDialog(self, welcome=True).exec()
+                out = self.refresh_status()
+                if value(out, "MENDELEY_KEYS") != "ok":
+                    return False
+            if value(out, "MENDELEY_LOGIN") != "ok":
+                ok = login(self)
+                self.refresh_status()
+                return ok
         return True
 
     def open_settings(self):
         SettingsDialog(self).exec()
         self.refresh_status()
 
-    def update_actions(self, kind):
+    def update_actions(self, kind, counts=None):
         self.kind = kind
-        self.send_btn.setEnabled(kind in ("zotero", "both"))
-        self.recv_btn.setEnabled(kind in ("mendeley", "both"))
+        self.counts = counts or getattr(self, "counts", {})
+        present = [f for f in zms.FORMATS if self.counts.get(f)]
+        src = " · ".join(zms.FORMAT_NAME[f] for f in present)
+        for fmt, b in self.buttons.items():
+            # 원고에 다른 형식의 인용이 있어야 그 형식으로 바꿀 수 있다
+            on = bool(kind) and kind != "none" and any(f != fmt for f in present)
+            b.setEnabled(on)
+            sub = tr("to_sub", src=src, dst=zms.FORMAT_NAME[fmt]) if on else ""
+            b.setText(tr("to_" + fmt) + ("\n" + sub if sub else ""))
 
     def set_file(self, path):
         if not path.lower().endswith(".docx"):
@@ -589,17 +637,15 @@ class Main(QWidget):
             show_error(self, code, out)
             return
         kind = value(out, "KIND")
-        name = Path(path).name
-        if kind == "zotero":
-            info = tr("kind_zotero", n=value(out, "ZOTERO"))
-        elif kind == "mendeley":
-            info = tr("kind_mendeley", n=value(out, "MENDELEY"))
-        elif kind == "both":
-            info = tr("kind_both", z=value(out, "ZOTERO"), m=value(out, "MENDELEY"))
+        counts = {f: int(value(out, f.upper()) or 0) for f in zms.FORMATS}
+        if kind in zms.FORMATS:
+            info = tr("kind_one", fmt=zms.FORMAT_NAME[kind], n=counts[kind])
+        elif kind == "mixed":
+            info = tr("kind_mixed", parts=", ".join(f"{zms.FORMAT_NAME[f]} {n}" for f, n in counts.items() if n))
         else:
             info = tr("kind_none")
-        self.file_label.setText(f"<b>{name}</b><br><span style='color:gray'>{info}</span>")
-        self.update_actions(kind)
+        self.file_label.setText(f"<b>{Path(path).name}</b><br><span style='color:gray'>{info}</span>")
+        self.update_actions(kind, counts)
 
     def run_with_login(self, argv, message):
         code, out = run_blocking(self, argv, message)
@@ -610,46 +656,51 @@ class Main(QWidget):
                 code, out = run_blocking(self, argv, message)
         return code, out
 
-    def send(self):
-        if not self.path or not self.ensure_setup():
+    def convert(self, target):
+        if not self.path or not self.ensure_ready(target):
             return
-        code, out = self.run_with_login(["pull"], tr("working_send"))
-        if code == 0:
-            code, out = self.run_with_login(["to-mendeley", self.path, "--add-missing"], tr("working_send"))
+        name = zms.FORMAT_NAME[target]
+        argv = ["convert", self.path, "--to", target]
+        if target == "mendeley":
+            code, out = self.run_with_login(argv + ["--add-missing"], tr("working", fmt=name))
+        else:
+            code, out = run_blocking(self, argv, tr("working", fmt=name))
+            if code == zms.EXIT_MISSING:
+                if not self.ask_missing(target, out):
+                    return
+                code, out = run_blocking(self, argv + ["--allow-unlinked"], tr("working", fmt=name))
         if code != 0:
             show_error(self, code, out)
             return
-        msg = tr("done_send", n=value(out, "CITES"))
+        msg = tr("done", n=value(out, "CITES"), fmt=name)
         if value(out, "ADDED") not in ("", "0"):
-            msg += "\n" + tr("done_send_added", n=value(out, "ADDED"))
-        self.show_result(msg + "\n\n" + tr("done_send_tip"), value(out, "OUT"))
-
-    def receive(self):
-        if not self.path or not self.ensure_setup():
-            return
-        code, out = run_blocking(self, ["to-zotero", self.path], tr("working_recv"))
-        if code == zms.EXIT_MISSING:
-            box = QMessageBox(self)
-            box.setWindowTitle(APP)
-            box.setIcon(QMessageBox.Question)
-            box.setText(tr("missing_q", n=value(out, "MISSING")))
-            add = box.addButton(tr("add_and_convert"), QMessageBox.AcceptRole)
-            only = box.addButton(tr("convert_only"), QMessageBox.ActionRole)
-            box.addButton(tr("cancel"), QMessageBox.RejectRole)
-            box.setDefaultButton(add)
-            box.exec()
-            if box.clickedButton() not in (add, only):
-                return
-            if box.clickedButton() is add and not self.import_to_zotero(value(out, "MISSING_FILE")):
-                return
-            code, out = run_blocking(self, ["to-zotero", self.path, "--allow-unlinked"], tr("working_recv"))
-        if code != 0:
-            show_error(self, code, out)
-            return
-        msg = tr("done_recv", n=value(out, "CITES"))
+            msg += "\n" + tr("done_added", n=value(out, "ADDED"))
         if value(out, "UNLINKED") not in ("", "0"):
-            msg += "\n" + tr("done_recv_unl", n=value(out, "UNLINKED"))
-        self.show_result(msg + "\n\n" + tr("done_recv_tip"), value(out, "OUT"))
+            msg += "\n" + tr("done_unl", n=value(out, "UNLINKED"), fmt=name)
+        self.show_result(msg + "\n\n" + tr("tip_" + target), value(out, "OUT"))
+
+    def ask_missing(self, target, out):
+        """라이브러리에 없는 문헌이 있을 때 어떻게 할지 묻는다. 계속하면 True."""
+        box = QMessageBox(self)
+        box.setWindowTitle(APP)
+        box.setIcon(QMessageBox.Question)
+        n = value(out, "MISSING")
+        if target == "zotero":
+            box.setText(tr("missing_q", n=n))
+            add = box.addButton(tr("add_and_convert"), QMessageBox.AcceptRole)
+        else:
+            box.setText(tr("en_missing_q", n=n))
+            add = box.addButton(tr("show_import_file"), QMessageBox.ActionRole)
+        only = box.addButton(tr("convert_only"), QMessageBox.AcceptRole if target != "zotero" else QMessageBox.ActionRole)
+        box.addButton(tr("cancel"), QMessageBox.RejectRole)
+        box.setDefaultButton(add if target == "zotero" else only)
+        box.exec()
+        if box.clickedButton() is add:
+            if target == "zotero":
+                return self.import_to_zotero(value(out, "MISSING_FILE"))
+            reveal(value(out, "MISSING_FILE"))
+            return False
+        return box.clickedButton() is only
 
     def import_to_zotero(self, json_path):
         while True:
