@@ -510,9 +510,16 @@ def classify(field, mv, zv):
     return "change"
 
 
-def match_key(title, year, first_last):
+def match_key(title, year, first_last, no_author=False):
+    """no_author=True 면 저자 없는 문헌(법령·정부 통계)도 (제목, 연도, "") 키를 받는다.
+    원고 인용 변환에서만 켠다. 라이브러리 동기화(diff→PATCH)는 서버 문헌을 고치므로 엄격하게 둔다.
+    저자 있는 문헌과는 키가 달라 섞이지 않는다."""
     t = norm_title(title)
-    return (t, year, first_last.casefold()) if t and year and first_last else None
+    if not (t and year):
+        return None
+    if first_last:
+        return (t, year, first_last.casefold())
+    return (t, year, "") if no_author else None
 
 
 def doc_key(doc):
@@ -721,14 +728,14 @@ def csl_year(d):
 
 def csl_keys(d):
     a = (d.get("author") or [{}])[0]
-    k = match_key(d.get("title"), csl_year(d), a.get("family") or a.get("literal") or "")
+    k = match_key(d.get("title"), csl_year(d), a.get("family") or a.get("literal") or "", no_author=True)
     return {x for x in (("doi", norm_doi(d.get("DOI"))), ("tyl", k)) if x[1]}
 
 
 def doc_keys(doc):
     """Mendeley 문헌의 키 전부. 한쪽만 DOI 가 있어도 제목 키로 같은 문헌을 알아보게 한다."""
     a = (doc.get("authors") or [{}])[0]
-    k = match_key(doc.get("title"), doc.get("year"), a.get("last_name", ""))
+    k = match_key(doc.get("title"), doc.get("year"), a.get("last_name", ""), no_author=True)
     return {x for x in (("doi", norm_doi((doc.get("identifiers") or {}).get("doi"))), ("tyl", k)) if x[1]}
 
 
@@ -738,7 +745,7 @@ def zotero_keys():
         t = zotero_to_mendeley(it)
         if t.get("identifiers.doi"):
             keys.add(("doi", t["identifiers.doi"]))
-        k = match_key(t.get("title"), t.get("year"), (t.get("authors") or [{}])[0].get("last_name", ""))
+        k = match_key(t.get("title"), t.get("year"), (t.get("authors") or [{}])[0].get("last_name", ""), no_author=True)
         if k:
             keys.add(("tyl", k))
     return keys
@@ -950,10 +957,11 @@ def save_docx(out, infos, data):
 
 def out_path(src, suffix):
     """결과 파일 경로. 같은 이름이 있으면 덮어쓰지 않고 ' 2', ' 3' 을 붙인다."""
-    base = Path(src).with_name(Path(src).stem + suffix)
-    out, n = base.with_suffix(".docx"), 2
+    # with_suffix 는 이름 속 점(예: 10.14.26)을 확장자로 보고 잘라내므로 이름을 직접 붙인다
+    name = Path(src).stem + suffix
+    out, n = Path(src).with_name(name + ".docx"), 2
     while out.exists():
-        out, n = base.with_name(f"{base.name} {n}.docx"), n + 1
+        out, n = Path(src).with_name(f"{name} {n}.docx"), n + 1
     return out
 
 
@@ -1379,7 +1387,7 @@ def zotero_index():
     for it in load_zotero():
         t = zotero_to_mendeley(it)
         a = (t.get("authors") or [{}])[0].get("last_name", "")
-        for k in (("doi", t.get("identifiers.doi")), ("tyl", match_key(t.get("title"), t.get("year"), a))):
+        for k in (("doi", t.get("identifiers.doi")), ("tyl", match_key(t.get("title"), t.get("year"), a, no_author=True))):
             if k[1]:
                 idx[k].add((it["id"], it["key"]))
     return idx, local_key
@@ -1407,7 +1415,7 @@ def endnote_index():
             idx[("doi", norm_doi(doi.group(0).rstrip(".")))].add(rid)
         first = re.split(r"[\r\n]", author or "")[0].split(",")[0].strip()
         y = re.search(r"\d{4}", year or "")
-        k = match_key(title, int(y.group(0)) if y else None, first)
+        k = match_key(title, int(y.group(0)) if y else None, first, no_author=True)
         if k:
             idx[("tyl", k)].add(rid)
     con.close()
