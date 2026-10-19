@@ -46,7 +46,7 @@ from pathlib import Path
 API = "https://api.mendeley.com"
 DOC_TYPE = "application/vnd.mendeley-document.1+json"
 # Cloudflare 가 urllib 기본 User-Agent 를 error 1010 으로 막는다(2026-10-13 확인).
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 UA = f"Zoteley/{VERSION} (+https://github.com/hspark-rm/zoteley)"
 CONF_DIR = Path(os.environ.get("ZMS_CONF") or Path.home() / ".config" / "zotero-mendeley-sync")
 # 앱으로 실행하면 앱 꾸러미 안이 아니라 사용자 폴더에 작업 파일을 둔다(ZMS_DATA).
